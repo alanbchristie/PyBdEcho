@@ -1,0 +1,79 @@
+# FileWordCount .gitignore file.
+# Git uses this file to determine which files and directories to ignore,
+# before a commit is performed.
+
+# ------
+# Python detritus
+# ------
+# Important bits from Python.gitignore
+# See: https://github.com/github/gitignore/blob/master/Python.gitignore
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.mo
+*.pot
+*.log
+docs/_build/
+target/
+
+# ---------
+# JetBrains detritus
+# ---------
+# Important bits from JetBrains.gitignore
+# See: https://github.com/github/gitignore/blob/master/Global/JetBrains.gitignore
+#
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion
+
+*.iml
+.idea/
+*.ipr
+*.iws
+/out/
+.idea_modules/
+atlassian-ide-plugin.xml
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+
+# -------
+# Doxygen detritus
+# -------
+# Our use of Doxygen
+
+doxygen/
+
+# -------
+# Twisted detritus
+# -------
+
+_trial_temp/
