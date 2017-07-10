@@ -38,9 +38,9 @@ micropython.alloc_emergency_exception_buf(100)
 SAMPLE_FREQUENCY_HZ = 8000
 
 # The playback frequency.
-PLAYBACK_FREQUENCY_HZ = 8000
+PLAYBACK_FREQUENCY_HZ = 12000
 
-# Capture resolution (8 or 12) bits.
+# Capture resolution bits (8 or 12).
 CAPTURE_BITS = 8
 
 # Size of the Speech Detection Buffer (SDB) (milliseconds).
@@ -63,7 +63,7 @@ LS_VOLUME = 127
 
 # Speech threshold - the absolute difference between the silence estimate
 # and a sample for it to be considered speech. There's a lot of noise
-# on my board so expect +/- 156 at 8kHz and 12-bit (or 10 at 8-bit).
+# on my board so expect +/- 156 at 8kHz, 12-bit (or 10 at 8-bit).
 # Currently the estimate is not modified as recordings are made
 # (although it could be adapted during attenuation).
 # This value is 2 x standard deviation of typical noise levels.
@@ -76,15 +76,16 @@ else:
 # The proportion of the number of speech samples observed during the
 # speech detection phase that are required to trigger a recording.
 # Measured as a percentage size of the speech-detection buffer and
-# should be greater than 5%.
+# should probably be greater than 5%.
 DETECTION_SAMPLES_PCENT = 10
 
 # Estimate of the sample value for silence
-# (2048 for 12-bit data and 127 for 8-bit).
+# (in an ideal world this would be 2048 for 12-bit data and 127 for 8-bit).
 # This is just a default seed for the `adc_zero` value, which is adjusted
 # during attenuation, a process that occurs immediately prior to playback.
-# My board seems to settle around a value of 1893 at 12-bit.
-# Your starting value might be different.
+# My board seems to settle around a value of 1893 at 12-bits.
+# Your starting value might be different depending on amp-skin resistor
+# tolerances (see R11 & R13).
 # `adc_zero` is not modified if attenuation is disabled.
 if CAPTURE_BITS == 8:
     SILENCE = 127
@@ -300,7 +301,7 @@ silent_frames = array('I')
 # if it looks like there's an SD card present.
 # Incidentally ... You will need to hard-reset the card
 # before you can see any written files.
-DUMP_TO_SD_CARD = True
+DUMP_TO_SD_CARD = False
 # Maximum number of capture files to maintain.
 # The files are used on a round-robin basis by writing
 # to capture file 1, then capture file 2, etc.
@@ -379,7 +380,7 @@ def _init():
     capture_timer.init(freq=SAMPLE_FREQUENCY_HZ)
     capture_timer.callback(_capture_function)
 
-    # Stop the loudspeaker (just in case)
+    # Stop the loudspeaker (just be safe)
     _stop()
 
     # Attach a service function that will handle the USER switch being hit.
