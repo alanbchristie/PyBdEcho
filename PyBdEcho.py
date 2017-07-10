@@ -38,7 +38,7 @@ micropython.alloc_emergency_exception_buf(100)
 SAMPLE_FREQUENCY_HZ = 8000
 
 # The playback frequency.
-PLAYBACK_FREQUENCY_HZ = 14000
+PLAYBACK_FREQUENCY_HZ = 8000
 
 # Capture resolution (8 or 12) bits.
 CAPTURE_BITS = 8
@@ -53,8 +53,8 @@ SDB_SIZE_MS = 500
 # speech has been detected. It has to be larger than the
 # speech detection buffer, which is copied over the start
 # of this buffer prior to playback.
-# At 12-bit resolution I find I have enough memory for 3 seconds.
-# At 8-bit resolution I find I have enough memory for 8 seconds.
+# At 8kHz & 12-bit resolution I find I have enough memory for 3 seconds.
+# At 8kHz & 8-bit resolution I find I have enough memory for 8 seconds.
 SB_SIZE_S = 4
 
 # Loudspeaker volume.
@@ -63,14 +63,14 @@ LS_VOLUME = 127
 
 # Speech threshold - the absolute difference between the silence estimate
 # and a sample for it to be considered speech. There's a lot of noise
-# on my board so expect +/- 300 at 8kHz and 12-bit (or 20 at 8-bit).
+# on my board so expect +/- 156 at 8kHz and 12-bit (or 10 at 8-bit).
 # Currently the estimate is not modified as recordings are made
 # (although it could be adapted during attenuation).
 # This value is 2 x standard deviation of typical noise levels.
 if CAPTURE_BITS == 8:
-    SPEECH_THRESHOLD = 20
+    SPEECH_THRESHOLD = 10
 else:
-    SPEECH_THRESHOLD = 312
+    SPEECH_THRESHOLD = 156
 
 # Speech detection volume (percent).
 # The proportion of the number of speech samples observed during the
