@@ -5,8 +5,8 @@ https://github.com/alanbchristie/PyBdEcho
 Refer to project's LICENCE.txt for licence restrictions.
 
 The PyBoard 'Echo' audio capture/playback demonstration code.
-Presented at EuroPython, Rimini, July 2017. This application
-requires MicroPython (tested with v 1.9.1), PyBoard v1.1 and the
+v1.0.1 was presented at EuroPython, Rimini, July 2017. This application
+requires MicroPython (tested with v1.9.1), PyBoard v1.1 and the
 AMP Audio skin v1.0.
 
 The entry point is `echo()`, which simply invokes `_init()` followed by
@@ -34,11 +34,11 @@ micropython.alloc_emergency_exception_buf(100)
 # User Constants
 # --------------
 
-# The sampling frequency.
-SAMPLE_FREQUENCY_HZ = 8000
+# The capture rate.
+CAPTURE_FREQUENCY_HZ = 8000
 
-# The playback frequency.
-PLAYBACK_FREQUENCY_HZ = 12000
+# The playback rate.
+PLAYBACK_FREQUENCY_HZ = 16000
 
 # Capture resolution bits (8 or 12).
 CAPTURE_BITS = 8
@@ -48,14 +48,19 @@ CAPTURE_BITS = 8
 # while it's listening for speech.
 SDB_SIZE_MS = 500
 
+# A 'frame' for the purpose of identifying areas of the speech buffer
+# that contain only 'silence' samples. Frames that contain only silence
+# samples are attenuated.
+FRAME_PERIOD_MILLIS = 100
+
 # Size of the Speech Buffer (SB) (seconds).
 # Written to until full by the `_capture_function()` once
 # speech has been detected. It has to be larger than the
 # speech detection buffer, which is copied over the start
 # of this buffer prior to playback.
 # At 8kHz & 12-bit resolution I find I have enough memory for 3 seconds.
-# At 8kHz & 8-bit resolution I find I have enough memory for 8 seconds.
-SB_SIZE_S = 4
+# At 8kHz & 8-bit resolution I find I have enough memory for 7 seconds.
+SB_SIZE_S = 7
 
 # Loudspeaker volume.
 # 0 (off) to 127 (maximum).
@@ -92,16 +97,23 @@ if CAPTURE_BITS == 8:
 else:
     SILENCE = 1893
 
+# How many consecutive frames of silence need to occur after
+# speech has been detected in order to decide that speech has finished?
+# This is typically 500mS to 1S? i.e. the gap between sentences?
+EOS_CONSEC_SILENCE_FRAMES = 300 // FRAME_PERIOD_MILLIS
+# Compensate for zero...
+if EOS_CONSEC_SILENCE_FRAMES == 0:
+    EOS_CONSEC_SILENCE_FRAMES = 1
+
 # The 'toggle-rate' of the green LED when 'On Hold'.
 # This is the period between 'on' and 'off' states of the LED when
 # recording has been put 'on hold' with the USER button.
 USER_BUTTON_TOGGLE_MS = 750
 
-# Capture status poll period.
-# When a capture is in progress, this is the length of time the 'main loop'
-# sleeps between consecutive tests of the 'capture' flag. When the flag clears
-# a recording can be played.
-CAPTURE_POLL_MS = 250
+# Capture/playback status poll period.
+# This is the periodic sleep time while waiting for capture/playback
+# callback processes to finish.
+CALLBACK_PAUSE_MS = 250
 
 # -----------------
 # Derived constants
@@ -110,26 +122,21 @@ CAPTURE_POLL_MS = 250
 # Don't edit these, just edit the corresponding constant(s).
 
 # Speech detection buffer size (in samples)
-SDB_SAMPLE_SIZE = SDB_SIZE_MS * SAMPLE_FREQUENCY_HZ // 1000
+SDB_SAMPLE_SIZE = SDB_SIZE_MS * CAPTURE_FREQUENCY_HZ // 1000
 
 # The size of the main speech buffer (in samples).
-SB_SAMPLE_SIZE = SB_SIZE_S * SAMPLE_FREQUENCY_HZ
-
-# Speech buffer duration (milliseconds) - the length of time
-# the speech buffer represents when played at the playback frequency.
-# Playback via the DAC is non-blocking so once we begin playback
-# we need to 'sleep' for this period before we can do anything else.
-SB_DURATION_MS = 1000 * SB_SAMPLE_SIZE // PLAYBACK_FREQUENCY_HZ
+SB_SAMPLE_SIZE = SB_SIZE_S * CAPTURE_FREQUENCY_HZ
 
 # Absolute number of speech samples required to occupy the
 # speech detection buffer for the buffer to be considered to
 # contain the start of speech.
-DETECTION_SAMPLE_THRESHOLD = SDB_SAMPLE_SIZE * DETECTION_SAMPLES_PCENT // 100
+SPEECH_DETECTION_SAMPLE_THRESHOLD = SDB_SAMPLE_SIZE * \
+                                    DETECTION_SAMPLES_PCENT // 100
 
-# ---------
-# Variables
-# ---------
-# All the run-time application variables (globals, sorry)...
+# -----------------
+# Control variables
+# -----------------
+# All the capture/playback control variables (globals, sorry)...
 
 # A flag, toggled by the USER push-button.
 # When True the capture/playback loop pauses at the next capture
@@ -143,6 +150,11 @@ on_hold = True
 # `_capture_function()` when it is complete.
 capture = False
 
+# The playback control flag.
+# The flag is set by the main loop to start playing and is cleared by the
+# `_playback_function()` when it is complete.
+playback = False
+
 # The 'detect speech' flag.
 # This flag controls whether the `_capture_function()` is detecting speech
 # (writing to the circular speech detection buffer) or recording (to the
@@ -153,14 +165,30 @@ capture = False
 # so that the next recording starts with a fresh attempt to detect speech.
 detect_speech = True
 
-# Speech detection speech sample count.
+# ---------------
+# Other variables
+# ----------------
+# Other, miscellaneous variables (globals, sorry)...
+
+# Capture function's speech sample count.
 # The number of samples in the speech detection buffer considered speech.
 # It is incremented for each speech sample collected and decremented (to zero)
 # for each non-speech sample. When it meets the DETECTION_SAMPLE_THRESHOLD
 # then someone has started talking and the `_capture_function()` moves to
 # writing to the speech buffer. It is reset when the `_capture_function()`
 # moves to writing to the speech buffer.
-spc = 0
+ssc = 0
+
+upscale = 0
+
+# The number of frames considered 'silent' after speech has been detected.
+# Used in the capture function to detect the end of speech.
+num_consec_post_speech_silence_frames = 0
+
+# The 'eos' flag.
+# This is set when the `_capture_function()` has detected the end of speech
+# or when the recording as reached the end of the speech buffer.
+eos = False
 
 # The ADC value that represents zero.
 # The value is adjusted during the attenuation phase,
@@ -179,6 +207,20 @@ sdb_wr_offset = 0
 # and reset once speech is detected.
 sb_wr_offset = SDB_SAMPLE_SIZE
 
+# The offset into the speech buffer for playback.
+# This is initialised to zero and is used by the `_playback_function()`
+# to read samples from the speech buffer and write them to the DAC,
+# until the end-of-speech index has been reached.
+sb_rd_offset = 0
+
+# The _end of speech_ index (end of the speech-buffer by default).
+# The first sample in a _frame_ that represents the end of speech in the
+# speech buffer. The `_playback_function()` stops writing to the DAC
+# when it gets to this point in the speech buffer. It is set by
+# the `capture_function()`, which is responsible for detecting the end of
+# speech during the recording phase. Its maximum value is `SB_SAMPLE_SIZE`.
+eos_index = SB_SAMPLE_SIZE
+
 # The initialisation state.
 # Set after `_init()` has completed successfully.
 initialised = False
@@ -194,6 +236,11 @@ initialised = False
 # Configured in `_init()`
 capture_timer = pyb.Timer(14)
 
+# The playback timer. This is used to invoke our `_playback_function()`
+# at the designated PLAYBACK_FREQUENCY_HZ.
+# Configured in `_init()`
+playback_timer = pyb.Timer(13)
+
 # LED objects
 red_led = pyb.LED(1)
 grn_led = pyb.LED(2)
@@ -206,37 +253,6 @@ dac = pyb.DAC(1, bits=CAPTURE_BITS)
 # Switch object. During initialisation this will be used
 # to attach a handler function (`_user_switch_callback`) for the USER switch.
 sw = pyb.Switch()
-
-# -----------------
-# Performance timer
-# -----------------
-# We would like a performance timer to measure execution time of the
-# time-sensitive `_capture_function()` in the hope that it will execute
-# within the sampling period (i.e. 125uS at 8kHz and 167uS at 6kHz).
-# As as long as we have a timer with enough bits to easily count to 167
-# we should be OK.
-#
-# Timer 8 is a 16-bit timer driven by a 168MHz clock.
-# To count microseconds we need to divide the clock by 168
-# using a `prescaler` of 167.
-#
-# To use this timer, it’s best to first reset it to 0.
-# as it will wrap after approximately 65mS.
-#
-# >>> micros_timer.counter(0)
-#     ... do some stuff ...
-# >>> elapsed = micros.counter()
-micros_timer = pyb.Timer(8,                 # Timer 8 (168MHz)
-                         prescaler=167,     # Divide clock by 168
-                         period=0xffff)     # Use all 16-bits (up to 65mS?)
-
-# Variables used to record the min/max time spent in the capture function.
-# These are microsecond durations for the speech detection (sd) and collection
-# (sc) phases.
-sd_min_duration_us = 1000000    # Something much bigger than 1/SAMPLE_RATE
-sd_max_duration_us = 0
-sc_min_duration_us = 1000000    # Something much bigger than 1/SAMPLE_RATE
-sc_max_duration_us = 0
 
 # ------------------
 # ADC sample buffers
@@ -260,10 +276,6 @@ else:
 
 # Enabled?
 ATTENUATE_SILENCE = True
-# A 'frame' for the purpose of identifying areas of the speech buffer
-# that contain only 'silence' samples. Frames that contain only silence
-# samples are attenuated.
-FRAME_PERIOD_MILLIS = 100
 # Speech threshold during attenuation - the absolute difference between the
 # silence estimate and a sample for it to be considered speech during
 # an attenuation frame. This is normally higher than the SPEECH_THRESHOLD
@@ -280,7 +292,7 @@ else:
 # need to represent speech to prevent the fame from being attenuated.
 ATTENUATION_SAMPLES_PCENT = 1
 # The number of samples in a frame...
-FRAME_PERIOD_SAMPLES = SAMPLE_FREQUENCY_HZ * FRAME_PERIOD_MILLIS // 1000
+FRAME_PERIOD_SAMPLES = CAPTURE_FREQUENCY_HZ * FRAME_PERIOD_MILLIS // 1000
 # The number of frames in the speech buffer (will/must be whole)
 SB_FRAME_COUNT = SB_SAMPLE_SIZE // FRAME_PERIOD_SAMPLES
 # Frame period samples required to be speech
@@ -309,14 +321,15 @@ DUMP_FILE_LIMIT = 50
 # The next capture file number...
 dump_file_num = 1
 
-# -------------------
-# Hardware timing pin
-# -------------------
-# The pin used for hardware-based timing.
+# --------------------
+# Hardware timing pins
+# --------------------
+# The pins used for hardware-based timing.
 # This pin voltage is lowered on entry to the capture function
-# and raised on exit. Attach an oscilloscope to this pin to measure
-# the `_collect_function()` duration.
-timing_pin = pyb.Pin('Y1', pyb.Pin.OUT_PP)
+# and raised on exit. Attach an oscilloscope to these pins to measure
+# the collection or playback callback durations.
+capture_timing_pin = pyb.Pin(pyb.Pin.board.Y1, pyb.Pin.OUT_PP)
+playback_timing_pin = pyb.Pin(pyb.Pin.board.Y2, pyb.Pin.OUT_PP)
 
 
 # -----------------------------------------------------------------------------
@@ -328,9 +341,7 @@ def _init():
     Returns 'True' if successfully initialised.
     """
 
-    global adc, dac, capture, sd_buf, s_buf, capture_timer, initialised
-    global DETECTION_SAMPLE_THRESHOLD, silent_frames, timing_pin
-    global on_hold
+    global initialised
 
     # Do nothing if already initialised
     if initialised:
@@ -343,18 +354,21 @@ def _init():
         print('CAPTURE_BITS must be 8 or 12, not {}'.format(CAPTURE_BITS))
         return
 
-    grn_led.off()   # List when listening (flashing when 'on hold')
+    # Set loud-speaker volume.
+    # This may fail if there are problems with the board.
+    if not _set_volume(LS_VOLUME):
+        print('set_volume({}) failed.'
+              ' Is the Audio Skin attached?'.format(LS_VOLUME))
+        return
+
+    grn_led.on()    # List when listening (flashing when 'on hold')
     amb_led.off()   # Lit when writing to the speech buffer
     blu_led.off()   # Lit when playing back the speech buffer
     red_led.off()   # Lit when writing to SD card/flash
 
-    # Initialise the capture hardware timing pin (set it to 'high').
-    timing_pin.high()
-
-    # Prevent the capture function from doing anything.
-    # It gets called at the capture sample rate but does nothing
-    # if `capture` is false.
-    capture = False
+    # Initialise the hardware timing pins (set it to 'high').
+    capture_timing_pin.high()
+    playback_timing_pin.high()
 
     # Create each capture array
     # by appending the appropriate number of samples...
@@ -368,24 +382,20 @@ def _init():
         for _ in range(SB_FRAME_COUNT):
             silent_frames.append(0)
 
-    # Set loud-speaker volume.
-    # This may fail if there are problems with the board.
-    if not _set_volume(LS_VOLUME):
-        print('set_volume({}) failed.'
-              ' Is the Audio Skin attached?'.format(LS_VOLUME))
-        return
-
-    # Create a timer and attach our collect function.
+    # Create a timer we attach our collect function when we `listen`.
     # The function will do nothing while 'capture' is False.
-    capture_timer.init(freq=SAMPLE_FREQUENCY_HZ)
-    capture_timer.callback(_capture_function)
-
-    # Stop the loudspeaker (just be safe)
-    _stop()
+    capture_timer.init(freq=CAPTURE_FREQUENCY_HZ)
+    # Same with the playback function...
+    playback_timer.init(freq=PLAYBACK_FREQUENCY_HZ)
 
     # Attach a service function that will handle the USER switch being hit.
-    # The supplied function toggles the 'on hold' flag.
+    # The supplied function simply toggles the 'on hold' flag.
     sw.callback(_user_switch_callback)
+
+    print('EOS_CONSEC_SILENCE_FRAMES={}'.format(EOS_CONSEC_SILENCE_FRAMES))
+    print('FRAME_PERIOD_SAMPLES={}'.format(FRAME_PERIOD_SAMPLES))
+    print('ATTENUATION_THRESHOLD={}'.format(ATTENUATION_THRESHOLD))
+    print('SPEECH_DETECTION_SAMPLE_THRESHOLD={}'.format(SPEECH_DETECTION_SAMPLE_THRESHOLD))
 
     initialised = True
 
@@ -448,15 +458,15 @@ def _dump_capture_info():
         fp.write("{}\n".format(value))
 
     fp.write("sb->\n")
-    for i in range(SB_SAMPLE_SIZE):
+    for i in range(eos_index):
         value = s_buf[i]
         fp.write("{}\n".format(value))
 
     fp.write("adc_zero {}\n".format(adc_zero))
-    fp.write("sd {}-{}uS\n".format(sd_min_duration_us, sd_max_duration_us))
-    fp.write("sc {}-{}uS\n".format(sc_min_duration_us, sc_max_duration_us))
     fp.write("sb_wr_offset {}\n".format(sb_wr_offset))
+    fp.write("sb_rd_offset {}\n".format(sb_rd_offset))
     fp.write("sdb_wr_offset {}\n".format(sdb_wr_offset))
+    fp.write("eos_index {}\n".format(eos_index))
 
     fp.close()
 
@@ -492,20 +502,51 @@ def _set_volume(volume):
 
 
 # -----------------------------------------------------------------------------
+def _capture():
+    """Initiates a capture sequence by unlocking the `_capture_function()`.
+    We then sit here waiting for the capture to finish.
+    """
+
+    global capture
+
+    # To unlock the capture function (which is continuously running
+    # as a callback) we set the `capture` flag and wait until
+    # it's cleared (by the `_capture_function()`).
+
+    capture = True
+    capture_timer.callback(_capture_function)
+    while capture:
+        utime.sleep_ms(CALLBACK_PAUSE_MS)
+    capture_timer.callback(None)
+
+
+# -----------------------------------------------------------------------------
 def _play():
     """Plays the speech buffer (sb) to the loudspeaker (DAC)
-    at the playback frequency. The speech buffer is written to the DAC
-    in a non-blocking fashion, so the caller has to wait for sufficient
-    time to elapse before being sure the audio has finished playing.
+    by unlocking the `_playback_function()`. We then sit here waiting for
+    the playback to finish.
     
     The caller must ensure that the speech-detection buffer
     has been copied into the spare space at the start of the speech
     buffer.
     """
 
-    dac.write_timed(s_buf,
-                    pyb.Timer(7, freq=PLAYBACK_FREQUENCY_HZ),
-                    mode=pyb.DAC.NORMAL)
+    global playback
+
+    # To unlock the playback function (which is continuously running
+    # as a callback) we set the `playback` flag and wait until
+    # it's cleared (which the `_playback_function()` will do when
+    # the buffer's been exhausted).
+
+    playback = True
+    playback_timer.callback(_playback_function)
+    while playback:
+        utime.sleep_ms(CALLBACK_PAUSE_MS)
+    playback_timer.callback(None)
+
+    # Need to stop the DAC,
+    # to silence it's annoying 'whistle'
+    _stop()
 
 
 # -----------------------------------------------------------------------------
@@ -545,7 +586,8 @@ def _copy_speech_detection_buffer():
 
 # -----------------------------------------------------------------------------
 def _attenuate_sb_silence():
-    """Attempts to attenuate areas of the speech buffer that are silent.
+    """Attempts to attenuate areas of the speech buffer that are silent,
+    up to (but not including) the `eos_index`.
     
     This function does a number of things. Firstly, it calculates a new ADC
     silence level from the average value found across all 'frames' that are
@@ -555,7 +597,7 @@ def _attenuate_sb_silence():
     This method can be disabled by setting ATTENUATE_SILENCE to False.
     """
 
-    global adc_zero, silent_frames
+    global adc_zero
 
     # Do nothing if disabled
     if not ATTENUATE_SILENCE:
@@ -579,7 +621,7 @@ def _attenuate_sb_silence():
     sample_index = 0
     # Run over the whole speech buffer (plus one sample).
     # The last sample lets us handle the last possible frame.
-    while sample_index < SB_SAMPLE_SIZE + 1:
+    while sample_index < eos_index + 1:
 
         # Starting a new frame?
         if sample_index % FRAME_PERIOD_SAMPLES == 0:
@@ -598,7 +640,7 @@ def _attenuate_sb_silence():
                 num_silent_frames += 1
             # Break out if we've just stepped out of the speech buffer
             # (we've just analysed the last frame)
-            if sample_index == SB_SAMPLE_SIZE:
+            if sample_index == eos_index:
                 break
             # Otherwise - we're starting a frame.
             # Reset the frame sample sum
@@ -664,8 +706,7 @@ def _capture_playback_loop():
     and data structures must be prepared by first calling `_init()`.
     """
 
-    global capture, initialised, adc
-    global grn_led
+    global capture, initialised
 
     # Avoid any action if not initialised
     if not initialised:
@@ -693,19 +734,12 @@ def _capture_playback_loop():
 
         print('Listening...')
 
+        # Start the capture process.
         # Switch green LED on to indicate that we're now listening.
         # `_capture_function()` will switch this off
         # when speech has been detected.
         grn_led.on()
-
-        # Set the capture flag.
-        # This causes the `_capture_function()` to 'do work'.
-        capture = True
-
-        # Wait, in a CPU-friendly way,
-        # for the capture process to complete.
-        while capture and not on_hold:
-            utime.sleep_ms(CAPTURE_POLL_MS)
+        _capture()
 
         # Capture is complete or it has stopped
         # because the user's hit the 'USER' button.
@@ -714,11 +748,12 @@ def _capture_playback_loop():
         # next iteration).
         if on_hold:
             while capture:
-                utime.sleep_ms(CAPTURE_POLL_MS)
+                utime.sleep_ms(CALLBACK_PAUSE_MS)
 
         # If not 'on hold' playback the speech buffer...
         if not on_hold:
-            print('Heard.')
+
+            print('Heard ({}).'.format(eos_index))
 
             # The blue LED is set to indicate 'playback'.
             blu_led.on()
@@ -731,11 +766,9 @@ def _capture_playback_loop():
 
             print('Playing...')
 
-            # Play the captured speech and pause long enough for it to
+            # Play the captured speech and wait for it to
             # finish playing before stopping (and resetting the DAC).
             _play()
-            utime.sleep_ms(SB_DURATION_MS)
-            _stop()
 
             print('Played.')
 
@@ -758,12 +791,9 @@ def _capture_function(timer):
     timer -- The timer, should you need it. We don't.
     """
 
-    global adc_zero
-    global capture, adc, detect_speech
-    global sdb_wr_offset, sb_wr_offset, spc
-    global grn_led, amb_led, timing_pin
-    global sd_max_duration_us, sd_min_duration_us
-    global sc_max_duration_us, sc_min_duration_us
+    global adc_zero, eos, num_consec_post_speech_silence_frames
+    global capture, detect_speech, eos_index
+    global sdb_wr_offset, sb_wr_offset, ssc
 
     # Do nothing if not set to capture by teh main loop.
     # Also, auto-stop if we find ourselves 'on hold'/
@@ -775,10 +805,8 @@ def _capture_function(timer):
         capture = False
         return
 
-    # Lower the timing pin
-    # and reset the precision timer...
-    timing_pin.low()
-    micros_timer.counter(0)
+    # Lower the timing pin...
+    capture_timing_pin.low()
 
     # Get a sample...
     new_sample = adc.read()
@@ -790,26 +818,28 @@ def _capture_function(timer):
     new_sample_delta = new_sample - adc_zero
     if new_sample_delta < 0:
         new_sample_delta *= -1
-    if new_sample_delta >= SPEECH_THRESHOLD:
-        is_speech = True
 
     # Are we listening (writing to detection buffer and listening for speech)
     # or have we detected speech and are now writing to the speech buffer?
     if detect_speech:
 
+        if new_sample_delta >= SPEECH_THRESHOLD:
+            is_speech = True
+
         # Update the current count of speech samples
-        # in the detection buffer.
+        # in the detection buffer. We're writing to a circular buffer
+        # so we also need to decrement (if we can).
         if is_speech:
-            spc += 1
-        elif spc > 0:
-            spc -= 1
+            ssc += 1
+        elif ssc > 0:
+            ssc -= 1
 
         # Store the new sample
         sd_buf[sdb_wr_offset] = new_sample
         sdb_wr_offset = (sdb_wr_offset + 1) % SDB_SAMPLE_SIZE
 
         # Met the speech threshold?
-        if spc >= DETECTION_SAMPLE_THRESHOLD:
+        if ssc >= SPEECH_DETECTION_SAMPLE_THRESHOLD:
             # Yes - move out of speech detection mode
             detect_speech = False
             # Move LEDs from green to amber
@@ -818,50 +848,153 @@ def _capture_function(timer):
             # Reset speech buffer offset
             # and the detector speech sample count
             sb_wr_offset = SDB_SAMPLE_SIZE
-            spc = 0
-
-        # Update min and max execution times
-        # for the speech detection (sd) stage...
-        elapsed_micros = micros_timer.counter()
-        if elapsed_micros > sd_max_duration_us:
-            sd_max_duration_us = elapsed_micros
-        if elapsed_micros < sd_min_duration_us:
-            sd_min_duration_us = elapsed_micros
+            # Reset the consecutive silence frame count
+            # prior to starting our recording.
+            eos = False
+            ssc = 0
+            num_consec_post_speech_silence_frames = 0
 
     else:
 
         # Speech detected.
         # We are now writing to the speech buffer
-        # and do so until until it is full.
+        # and do so until until speech has stopped or the
+        # buffer is full.
 
-        s_buf[sb_wr_offset] = new_sample
-        sb_wr_offset += 1
+        if new_sample_delta >= ATTENUATE_SPEECH_THRESHOLD:
+            is_speech = True
 
-        # If we've filled the speech buffer
-        # clear the capture flag
-        # (which will unblock the main loop and begin playback)
+        # Reset spc at the start of each 'frame'.
+        if sb_wr_offset > SDB_SAMPLE_SIZE and \
+                sb_wr_offset % FRAME_PERIOD_SAMPLES == 0:
+
+            # If the current speech sample count value is less then the
+            # frame threshold for silence then the last frame was 'silent'
+            # so we need to increment the consecutive silent frame count.
+            if ssc < ATTENUATION_THRESHOLD:
+
+                # If we've now found the required number of consecutive
+                # silent frames then we've found the 'end of speech' (eos).
+                num_consec_post_speech_silence_frames += 1
+                if num_consec_post_speech_silence_frames == \
+                        EOS_CONSEC_SILENCE_FRAMES:
+
+                    # Stopped speaking!
+                    # Set the end-of-speech index to the sample at the
+                    # start of the frame that's the first silent frame in our
+                    # consecutive sequence. The _playback_function() stops
+                    # when it gets to this value.
+                    eos_index = sb_wr_offset - \
+                                EOS_CONSEC_SILENCE_FRAMES * \
+                                FRAME_PERIOD_SAMPLES
+                    eos = True
+
+            else:
+
+                ssc = 0
+
+        if not eos:
+
+            s_buf[sb_wr_offset] = new_sample
+            sb_wr_offset += 1
+
+            # Count speech samples.
+            # It's reset at the start of each frame so we don't need to
+            # decrement as we do when we're listening.
+            if is_speech:
+
+                # Count
+                ssc += 1
+
+                # Too many speech samples in a frame?
+                # If so, reset the consecutive frames count.
+                # But only only once in each frame
+                # (i.e. when spc 'equals' the threshold)
+                if ssc == ATTENUATION_THRESHOLD:
+                    num_consec_post_speech_silence_frames = 0
 
         if sb_wr_offset == SB_SAMPLE_SIZE:
-            # Stopped capture...
-            amb_led.off()
 
-            # Back to detecting speech if we told to capture again...
+            # No 'end of speech' but we've hit the end of the speech buffer.
+            # Set index to the end of the
+            eos_index = SB_SAMPLE_SIZE
+            eos = True
+
+        # If speech has stopped then we should stop.
+        # We do this by clearing the capture flag
+        # (which will unblock the main loop and begin playback)
+        if eos:
+            # Auto-reset the `detecting speech` flag,
+            # and the speech sample count.
+            # so we're ready to capture again...
             detect_speech = True
+            ssc = 0
 
             # Switch ourselves off,
             # unblocking the main loop...
             capture = False
-
-        # Record min and max execution times
-        # for the speech collection (sc) stage...
-        elapsed_micros = micros_timer.counter()
-        if elapsed_micros > sc_max_duration_us:
-            sc_max_duration_us = elapsed_micros
-        if elapsed_micros < sc_min_duration_us:
-            sc_min_duration_us = elapsed_micros
+            amb_led.off()
 
     # Raise the timing pin
-    timing_pin.high()
+    capture_timing_pin.high()
+
+
+# -----------------------------------------------------------------------------
+def _playback_function(timer):
+    """The playback routine.
+
+    Connected to a timer as a call-back and called at the rate defined
+    in PLAYBACK_FREQUENCY_HZ. The 'timer' argument is not used. This function
+    is responsible for reading samples from the speech buffer and writing them
+    to the DAC. It does this while `playback` is True and the sample it's
+    reading is not at or past the _end of speech_ index.
+
+    Parameters
+    ----------
+    timer -- The timer, should you need it. We don't.
+    """
+
+    global sb_rd_offset, playback, upscale
+
+    # Do nothing if not playing
+    if not playback:
+        return
+
+    # Lower the timing pin...
+    playback_timing_pin.low()
+
+    # Write the next value from the speech buffer to the DAC.
+    # If we're up-scaling (playing at 2x capture rate) construct a new sample
+    # using the average of the last sample, and the next.
+    # This way we can reduce the DAC whistle by pushing it from 8kHz to 16kHz
+    # for example.
+    value = s_buf[sb_rd_offset]
+    if upscale == 1 and sb_rd_offset < eos_index - 1:
+        value += s_buf[sb_rd_offset + 1]
+        value //= 2
+
+    dac.write(value)
+
+    upscale += 1
+    if upscale == 2:
+        upscale = 0
+        sb_rd_offset += 1
+
+        # Stop when we've reached the `end of speech`.
+        # This will be at the end of speech or the length of the speech buffer,
+        # whichever turns out to be shorter.
+        if sb_rd_offset >= eos_index:
+
+            # Finished playing the speech back
+            #
+            # Auto-reset the speech buffer read offset
+            # in preparation for our next playback.
+            sb_rd_offset = 0
+            # And switch ourselves off
+            playback = False
+
+    # Raise the timing pin
+    playback_timing_pin.high()
 
 
 # -----------------------------------------------------------------------------
