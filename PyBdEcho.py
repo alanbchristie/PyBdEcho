@@ -97,9 +97,9 @@ LS_VOLUME = 127
 #
 # See `DETECTION_SAMPLES_PCENT`
 if CAPTURE_BITS == 8:
-    SPEECH_THRESHOLD = 10
+    SPEECH_THRESHOLD = 25
 else:
-    SPEECH_THRESHOLD = 156
+    SPEECH_THRESHOLD = 400
 
 # Speech detection volume (percent).
 # The proportion of the number of speech samples observed during the
@@ -349,9 +349,9 @@ ATTENUATE_SILENCE = True
 # value divided by 16 - i.e. the magnitude of the change in sample size at each
 # resolution)
 if CAPTURE_BITS == 8:
-    ATTENUATE_SPEECH_THRESHOLD = 36     # Trial & Error
+    ATTENUATE_SPEECH_THRESHOLD = 50     # Trial & Error
 else:
-    ATTENUATE_SPEECH_THRESHOLD = 500    # Trial & Error
+    ATTENUATE_SPEECH_THRESHOLD = 800    # Trial & Error
 
 # The percentage of samples that need to be _speech_ in a speech-buffer
 # frame to prevent it from being attenuated. This is somewhat lower
