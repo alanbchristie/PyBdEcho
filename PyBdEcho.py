@@ -11,7 +11,7 @@ v1.0.1 was presented at EuroPython, Rimini, July 2017.
 This application is designed to run on the MicroPython PyBoard and
 was developed using the following: -
 
--   MicroPython (tested with v1.9.1)
+-   MicroPython (tested with v1.9.2)
 -   PyBoard v1.1
 -   The AMP Audio skin v1.0.
 
