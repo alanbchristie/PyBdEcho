@@ -19,7 +19,7 @@ The entry point is `echo()`, which simply invokes `_init()` followed by
 `_capture_play_loop()`.
 
 Alan B. Christie
-July 2017
+October 2017
 """
 
 from array import array
@@ -133,7 +133,7 @@ if EOS_CONSEC_SILENCE_FRAMES == 0:
 
 # The 'toggle-rate' of the green LED when 'On Hold'.
 # This is the period between 'on' and 'off' states of the LED when
-# recording has been put 'on hold' with the USER button.
+# recording has been put 'on hold' by the USER button.
 USER_BUTTON_TOGGLE_MS = 750
 
 # Capture/playback status poll period.
@@ -212,7 +212,7 @@ playback = False
 # that appears to be a speech sample and decremented (to zero)
 # for each non-speech sample. When it meets the DETECTION_SAMPLE_THRESHOLD
 # then someone has started talking and the `_capture_function()` moves to
-# writing to the speech buffer.
+# recording (writing to the speech buffer).
 #
 # When recording starts the value is reset at the start of each `frame`
 # and is used to count the number of speech samples in the current frame
@@ -238,25 +238,25 @@ num_consec_post_speech_silence_frames = 0
 # is set to the extend of the speech buffer (i.e. `SB_SAMPLE_SIZE`).
 #
 # When end-of-speech has been detected this is the first sample in the
-# _frame_ that  begins the discovered consecutive sequence of silence frames in
+# _frame_ that  begins the consecutive sequence of silence frames in
 # the speech buffer. This value is used by the chosen 'playback' function()
-# to stops playing the audio.
+# to stop playing the audio.
 eos_index = SB_SAMPLE_SIZE
 
 # The 'end of speech' (eos) flag. Used inside the `_capture_function()`
-# this is set when it has detected the end of speech once recording
-# has started. If no end of speech is detected it is set when the end of the
-# speech buffer has been reached.
+# this is set when it has detected the end of speech during the recording
+# phase. If no end of speech is detected it is set when the speech buffer
+# is full.
 #
 # When set the `_capture_function()` stops recording.
 eos = False
 
 # The 'estimate' ADC value that represents silence (zero).
 # The value is adjusted during the attenuation phase,
-# which run (if not disabled) after recordings have been made.
+# which runs (if not disabled) after each recording.
 adc_zero = SILENCE
 
-# The current speech-detection buffer write offset. A circular offset
+# The current speech-detection buffer _write offset_. A circular offset
 # used by `_capture_function()`. Updated from within `_capture_function()`.
 sdb_wr_offset = 0
 
@@ -345,9 +345,6 @@ ATTENUATE_SILENCE = True
 # silence estimate and a sample for it to be considered speech during
 # an attenuation frame. This is normally higher than the SPEECH_THRESHOLD
 # so we only attenuate if we're really sure it's not speech.
-# for 12-bit 8kHz recordings I use a value of around 500 (and 8-bit is this
-# value divided by 16 - i.e. the magnitude of the change in sample size at each
-# resolution)
 if CAPTURE_BITS == 8:
     ATTENUATE_SPEECH_THRESHOLD = 50     # Trial & Error
 else:
@@ -401,7 +398,7 @@ def _init():
     """Initialise the application data and hardware objects.
     If initialisation fails, i.e. it can't set the loudspeaker volume,
     it returns None. If initialisation fails the capture-playback loop
-    will not run.
+    should not run.
 
     If already initialised this function does nothing.
      
@@ -888,16 +885,19 @@ def _capture_function(timer):
 
     The 'timer' argument is not used.
 
-    This function moves through three 'states'. Its initial state is
-    'detect_speech'. Here it's monitoring the collected samples, writing
-    them to a circular 'speech detection buffer', waiting for sufficient
-    'high value' samples to occur in order to consider that speech has started.
+    This function moves through two 'states'.
 
-    Once speech has been detected it moves to the 'recording' phase and writes
-    new samples to the main 'speech buffer'. While 'recording' the capture
-    function monitors the collected samples looking for a sufficiently quiet
-    period of silence in order to detect the end of speech (or exhaust the
-    speech buffer).
+    Its initial state is dedicated to 'detecting speech'. Here it's monitoring
+    the collected samples, writing them to a circular 'speech detection
+    buffer', waiting for sufficient 'noisy' samples to occur in order to
+    consider that speech has started.
+
+    Once speech has been detected it moves to the 'recording' state where
+    it writes samples to the main 'speech buffer'. While recording the
+    capture function is also attempting to detect `end of speech` by
+    comparing the collected samples against the 'silence' estimate.
+    Recording continues until there's been sufficient silence or the 'speech
+    buffer' has been exhausted.
     
     Parameters
     ----------
@@ -973,23 +973,26 @@ def _capture_function(timer):
 
         # Speech detected.
         # We are now writing to the speech buffer
-        # and do so until until speech has stopped or the
+        # and do so until until end of speech (eos) or the
         # buffer is full.
 
         if new_sample_delta >= ATTENUATE_SPEECH_THRESHOLD:
             is_speech = True
 
-        # Reset ssc at the start of each 'frame'.
+        # Reset the speech sample count (ssc) at the start of each 'frame'.
         if sb_wr_offset > SDB_SAMPLE_SIZE and \
                 sb_wr_offset % FRAME_PERIOD_SAMPLES == 0:
 
+            # Was the last 'frame' a frame of silence?
             # If the current speech sample count value is less then the
             # frame threshold for silence then the last frame was 'silent'
             # so we need to increment the consecutive silent frame count.
             if ssc < ATTENUATION_SPEECH_SAMPLE_THRESHOLD:
 
-                # If we've now found the required number of consecutive
-                # silent frames then we've found the 'end of speech' (eos).
+                # Silent - so increment the number of 'consecutive' post-speech
+                # silence frames. If we've now reached the required number of
+                # consecutive silent frames then we've found the
+                # 'end of speech' (eos).
                 num_consec_post_speech_silence_frames += 1
                 if num_consec_post_speech_silence_frames == \
                         EOS_CONSEC_SILENCE_FRAMES:
@@ -1007,11 +1010,13 @@ def _capture_function(timer):
 
             else:
 
+                # Reset 'speech sample count' for the next frame...
                 ssc = 0
 
         if not eos:
 
-            # Speaking. Store the sample...
+            # Could still be speaking.
+            # Store the collected sample...
             s_buf[sb_wr_offset] = new_sample
             sb_wr_offset += 1
 
@@ -1023,21 +1028,22 @@ def _capture_function(timer):
                 # Count
                 ssc += 1
 
-                # Too many speech samples in a frame?
-                # If so, reset the consecutive frames count.
-                # But only only once in each frame
+                # If we have collected sufficient speech samples
+                # in this frame then reset the consecutive frames count.
+                # But we only need do do this once in each frame
                 # (i.e. when ssc 'equals' the threshold)
                 if ssc == ATTENUATION_SPEECH_SAMPLE_THRESHOLD:
                     num_consec_post_speech_silence_frames = 0
 
         if sb_wr_offset == SB_SAMPLE_SIZE:
 
-            # No 'end of speech' but we've hit the end of the speech buffer.
-            # Set eos index to the end of the buffer - we've run out of time.
+            # We're at the end of the main 'speech buffer'.
+            # Set the end-of-speech index to the end of the buffer.
+            # The end of the buffer is also the end of speech!
             eos_index = SB_SAMPLE_SIZE
             eos = True
 
-        # If speech has stopped then we should stop.
+        # If now silent ('end of speech') then we should stop.
         # We do this by clearing the capture flag
         # (which will unblock the main loop and begin playback)
         if eos:
@@ -1053,6 +1059,7 @@ def _capture_function(timer):
             # unblocking the main loop...
             capture = False
 
+    # Timing measurement.
     # Raise the timing pin
     capture_timing_pin.high()
 
@@ -1111,14 +1118,15 @@ def _over_sample_playback_function(timer):
     and called at 2x the capture rate.
 
     We over-sample the data and move through the data at the collection rate,
-    For each sample we first write it to the DAC and the, on the next call
-    we write an interpolated using the last and next sample.
+    For each sample we first write it to the DAC and then, on the next call,
+    we write a _smoothed_ (interpolated) sample using the last and next value.
 
-    This allows us to move the DAC _whistle_ higher in frequency domain.
+    The interpolation allows us to reduce the quantisation error which would
+    be more prominent if we simply repeated the samples.
+
+    This allows us to move the DAC _whistle_ higher in the frequency domain.
     Instead of an 8kHz _whistle_ (which is quite audible) the _whistle_
-    moves to 16kHz and is less distracting. The interpolation allows us to
-    reduce the quantisation error which would be more prominent if we simply
-    repeated the samples.
+    moves to 16kHz and is less distracting.
 
     Parameters
     ----------
@@ -1173,7 +1181,7 @@ def echo():
     """Initialises and runs the main application.
     
     If initialisation fails the main loop does not run.
-    Initialisation will fail if there is no audio skin.
+    Initialisation will fail, for example, if there is no audio skin.
     """
 
     if _init():
