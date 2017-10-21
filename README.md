@@ -7,7 +7,7 @@ EuroPython [presentation] in Rimini, July 2017.
 ## Construction
 You need good soldering skills to build the [AMP skin].
 Once built you'll be able to access the speaker
-using DAC port `1` and the microphone's ADC on `X22`.
+using DAC port `1` and the microphone via the ADC on `X22`.
 
 ## Installation
 The code's been tested with:
