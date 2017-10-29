@@ -49,9 +49,10 @@ CAPTURE_FREQUENCY_HZ = 8000
 
 # The playback rate.
 # Samples are written to the DAC at this rate.
+#
 # If `USE_OVER_SAMPLE_PLAYBACK` the playback frequency is set to
 # 2x the capture frequency and this value is not used.
-PLAYBACK_FREQUENCY_HZ = 12000
+PLAYBACK_FREQUENCY_HZ = 11000
 
 # The 'over-sample' flag signals the `_play()` function to over-sample
 # the data when it's written to the DAC. Oversampling presents the data
@@ -61,7 +62,11 @@ PLAYBACK_FREQUENCY_HZ = 12000
 # uses the dedicated 'over-sample' function because, at 16kHz we're close
 # to the limits in what we can do in the function, even having conditional
 # blocks pushes the function beyond the real-time limits.
-USE_OVER_SAMPLE_PLAYBACK = True
+#
+# If USE_OVER_SAMPLE_PLAYBACK is True the playback frequency
+# is derived from the CAPTURE_FREQUENCY_HZ value,
+# PLAYBACK_FREQUENCY_HZ is not used.
+USE_OVER_SAMPLE_PLAYBACK = False
 
 # Size of the Speech Detection Buffer (SDB) (milliseconds).
 # This is the circular buffer used by the `_capture_function()`
@@ -74,9 +79,10 @@ SDB_SIZE_MS = 500
 # by the `_capture_function()`. It has to be larger than the
 # speech detection buffer, which is copied over the start
 # of this buffer prior to playback.
-# If using 'attenuation' (see below) then...
-# ...at 8kHz & 12-bit resolution we have enough memory for a 3-second buffer.
-# ...at 8kHz & 8-bit resolution we have enough memory for a 7-second buffer.
+#
+# Note: If using 'attenuation' (see below) then...
+#       ...at 8kHz & 12-bits we have enough memory for a 3-second buffer.
+#       ...at 8kHz & 8-bits we have enough memory for a 7-second buffer.
 SB_SIZE_S = 7
 
 # A 'frame' for the purpose of identifying areas of the speech buffer
@@ -126,7 +132,7 @@ else:
 # How many consecutive frames of silence need to occur after
 # speech has been detected in order to decide that speech has finished?
 # Keep short for best response times.
-EOS_CONSEC_SILENCE_FRAMES = 300 // FRAME_PERIOD_MILLIS
+EOS_CONSEC_SILENCE_FRAMES = 400 // FRAME_PERIOD_MILLIS
 # Must not be less than 1...
 if EOS_CONSEC_SILENCE_FRAMES == 0:
     EOS_CONSEC_SILENCE_FRAMES = 1
