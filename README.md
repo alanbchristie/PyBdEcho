@@ -50,7 +50,7 @@ _listening_ modes.
 Presentation slide (exported as a PDF document) can be found in the
 `presentation` directory.
 
-### Issue 2
+### EuroPython Issue 2
 Contains the following minor corrections to the original presentation slides.
 
 -   Typo in first bullet-point of slide `15`. `4096` should be `4095`
