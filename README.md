@@ -2,7 +2,8 @@
 An audio demonstration using [MicroPython], the [PyBoard] and its [AMP Skin].
 
 For a discussion of the application and its development refer to my
-EuroPython [presentation] in Rimini, July 2017.
+[EuroPython] presentation in Rimini (July 2017) or [PyConUK] in Cardiff
+(October 2017).
 
 ## Construction
 You need good soldering skills to build the [AMP skin].
@@ -46,7 +47,7 @@ Hitting the `USR` button will toggle the device between its _on-hold_ and
 _listening_ modes.
  
 ## Presentation
-The presentation slides (exported as a PDF document) can be found in the
+Presentation slide (exported as a PDF document) can be found in the
 `presentation` directory.
 
 ### Issue 2
@@ -59,8 +60,9 @@ Contains the following minor corrections to the original presentation slides.
 ---
 
 [AMP Skin]:     https://micropython.org/store/#/products/AMPv1_0
+[EuroPython]:   https://ep2017.europython.eu/conference/talks/building-a-real-time-embedded-audio-sampling-application-with-micropython
 [Firmware]:     http://micropython.org/download/
 [MicroPython]:  http://micropython.org
-[Presentation]: https://ep2017.europython.eu/conference/talks/building-a-real-time-embedded-audio-sampling-application-with-micropython
 [PyBoard]:      https://micropython.org/store/#/store
+[PyConUK]:      http://2017.pyconuk.org/sessions/talks/building-a-real-time-audio-sampling-app-on-the-pyboard/
 [Update]:       https://github.com/micropython/micropython/wiki/Pyboard-Firmware-Update
