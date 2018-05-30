@@ -36,12 +36,14 @@ hit the board's `RST` button.
 
 If all's gone well after rebooting the RED LED will extinguish after a few
 seconds and the GREEN LED should be slowly toggling (with a period of 1.5 seconds).
-The toggling LED indicates that the record/playback loop is _on-hold_.
+The toggling LED indicates that the record/playback loop is _on-hold_, i.e.
+is running but not _listening_. The _on-hold_ mode is great for live 
+presentations to avoid the board triggering on your speech until you're ready.
 
 Hitting the `USR` button will put the board into _listen_ mode (indicated
 by a solid GREEN LED). When _listening_ you should be able to speak
-(closely to the microphone) and, when you've stopped speaking (or exhausted the
-recording buffer) the device should playback what it heard.
+(closely to the microphone) and, when you've stopped speaking (or when the
+recording buffer is exhausted) the device should replay what it heard.
 
 Hitting the `USR` button will toggle the device between its _on-hold_ and
 _listening_ modes.
